@@ -1,0 +1,540 @@
+/*
+ * Digital Attendance System
+ * Author:     Pius Akoto
+ * Student ID: 01240949D
+ * Programme:  HND Electrical Engineering
+ * Institution: Accra Technical University
+ */
+
+// ============================================================================
+// Digital Attendance System for Hour-Based Lectures
+// HND Electrical Engineering – EEE227 Capstone Project
+// ============================================================================
+
+#include <iostream>
+#include <fstream>
+#include <vector>
+#include <string>
+#include <algorithm>
+#include <cctype>   // for toupper
+#include <sstream>
+
+using namespace std;
+
+// ----------------------------------------------------------------------------
+// Student Class
+// ----------------------------------------------------------------------------
+class Student {
+private:
+    string indexNumber;   // e.g. "2025001"
+    string name;
+public:
+    Student() {}
+    Student(const string& idx, const string& n) : indexNumber(idx), name(n) {}
+
+    string getIndex() const { return indexNumber; }
+    string getName() const  { return name; }
+
+    void display() const {
+        cout << "Index: " << indexNumber << ", Name: " << name << endl;
+    }
+};
+
+// ----------------------------------------------------------------------------
+// AttendanceSession Class
+// ----------------------------------------------------------------------------
+class AttendanceSession {
+private:
+    string courseCode;
+    string date;          // format YYYY-MM-DD
+    string startTime;     // format HH:MM
+    int duration;         // in minutes
+    // Record of attendance: each pair stores student index and status (P/A/L)
+    vector<pair<string, char>> records;
+
+public:
+    AttendanceSession() {}
+    AttendanceSession(const string& code, const string& d, const string& time, int dur)
+        : courseCode(code), date(d), startTime(time), duration(dur) {}
+
+    // Getters
+    string getCourseCode() const { return courseCode; }
+    string getDate() const        { return date; }
+    string getStartTime() const   { return startTime; }
+    int getDuration() const       { return duration; }
+
+    // Initialise records with all students (default status 'A' = Absent)
+    void initialiseRecords(const vector<Student>& students) {
+        records.clear();
+        for (const auto& s : students) {
+            records.push_back({s.getIndex(), 'A'});
+        }
+    }
+
+    // Set status for a specific student (if index exists)
+    bool setStatus(const string& index, char status) {
+        status = toupper(status);
+        if (status != 'P' && status != 'A' && status != 'L') return false;
+
+        for (auto& rec : records) {
+            if (rec.first == index) {
+                rec.second = status;
+                return true;
+            }
+        }
+        return false; // index not found
+    }
+
+    // Get status of a student (returns '?' if not found)
+    char getStatus(const string& index) const {
+        for (const auto& rec : records) {
+            if (rec.first == index) return rec.second;
+        }
+        return '?';
+    }
+
+    // Display attendance list with student names (requires student list)
+    void displayAttendanceList(const vector<Student>& students) const {
+        cout << "\nAttendance for " << courseCode << " on " << date
+             << " at " << startTime << " (Duration: " << duration << " min)\n";
+        cout << "----------------------------------------------------\n";
+        cout << "Index      Name                          Status\n";
+        cout << "----------------------------------------------------\n";
+
+        for (const auto& rec : records) {
+            // Find student name
+            string studentName = "Unknown";
+            for (const auto& s : students) {
+                if (s.getIndex() == rec.first) {
+                    studentName = s.getName();
+                    break;
+                }
+            }
+            cout << rec.first << "  " << studentName;
+            // Pad with spaces for alignment (simple approach)
+            for (size_t i = 0; i < (30 - studentName.length()); ++i) cout << ' ';
+            cout << "  " << rec.second << endl;
+        }
+        cout << "----------------------------------------------------\n";
+    }
+
+    // Display summary counts
+    void displaySummary() const {
+        int present = 0, absent = 0, late = 0;
+        for (const auto& rec : records) {
+            switch (rec.second) {
+                case 'P': present++; break;
+                case 'A': absent++;  break;
+                case 'L': late++;    break;
+            }
+        }
+        cout << "\nSummary for " << courseCode << " on " << date << ":\n";
+        cout << "Present: " << present << "  Absent: " << absent << "  Late: " << late << endl;
+    }
+
+    // Save session to a file named: session_COURSE_DATE.txt
+    bool saveToFile() const {
+        string filename = "session_" + courseCode + "_" + date + ".txt";
+        ofstream fout(filename);
+        if (!fout) return false;
+
+        fout << courseCode << endl;
+        fout << date << endl;
+        fout << startTime << endl;
+        fout << duration << endl;
+        fout << "Index,Status" << endl;   // header
+        for (const auto& rec : records) {
+            fout << rec.first << "," << rec.second << endl;
+        }
+        fout.close();
+        return true;
+    }
+
+    // Static method to load a session from file (returns nullptr on failure)
+    static AttendanceSession* loadFromFile(const string& filename, const vector<Student>& students) {
+        ifstream fin(filename);
+        if (!fin) return nullptr;
+
+        AttendanceSession* session = new AttendanceSession();
+        string line;
+
+        // Read courseCode
+        getline(fin, session->courseCode);
+        // Read date
+        getline(fin, session->date);
+        // Read startTime
+        getline(fin, session->startTime);
+        // Read duration
+        getline(fin, line);
+        session->duration = stoi(line);
+
+        // Read header line (and discard)
+        getline(fin, line);
+
+        // Read records
+        session->records.clear();
+        while (getline(fin, line)) {
+            if (line.empty()) continue;
+            size_t comma = line.find(',');
+            if (comma == string::npos) continue;
+            string idx = line.substr(0, comma);
+            char stat = line[comma + 1];
+            session->records.push_back({idx, stat});
+        }
+        fin.close();
+        return session;
+    }
+
+    // For updating an existing record (used when remarking)
+    bool updateRecord(const string& index, char newStatus) {
+        return setStatus(index, newStatus);
+    }
+};
+
+// ----------------------------------------------------------------------------
+// Global data
+// ----------------------------------------------------------------------------
+vector<Student> students;
+vector<AttendanceSession> sessions;
+
+// ----------------------------------------------------------------------------
+// File I/O helpers for students
+// ----------------------------------------------------------------------------
+void saveStudentsToFile() {
+    ofstream fout("students.txt");
+    for (const auto& s : students) {
+        fout << s.getIndex() << "," << s.getName() << endl;
+    }
+    fout.close();
+}
+
+void loadStudentsFromFile() {
+    ifstream fin("students.txt");
+    if (!fin) return; // file may not exist yet
+
+    string line;
+    while (getline(fin, line)) {
+        size_t comma = line.find(',');
+        if (comma == string::npos) continue;
+        string idx = line.substr(0, comma);
+        string name = line.substr(comma + 1);
+        students.push_back(Student(idx, name));
+    }
+    fin.close();
+}
+
+// Load all session files from current directory (simple version: hardcoded or by naming pattern)
+// For simplicity, we will not auto-load sessions; instead they will be loaded when needed via menu.
+// Alternatively, we could scan for files starting with "session_". 
+// Here we'll let the user choose to load a session by providing the filename.
+// We'll also save each session individually when created/modified.
+
+// ----------------------------------------------------------------------------
+// Menu functions
+// ----------------------------------------------------------------------------
+
+void studentManagementMenu() {
+    int choice;
+    do {
+        cout << "\n--- Student Management ---\n";
+        cout << "1. Register a new student\n";
+        cout << "2. View all registered students\n";
+        cout << "3. Search student by index number\n";
+        cout << "4. Back to main menu\n";
+        cout << "Enter choice: ";
+        cin >> choice;
+        cin.ignore(); // clear newline
+
+        switch (choice) {
+            case 1: {
+                string idx, name;
+                cout << "Enter index number: ";
+                getline(cin, idx);
+                // Check for duplicate
+                auto it = find_if(students.begin(), students.end(),
+                                  [&idx](const Student& s) { return s.getIndex() == idx; });
+                if (it != students.end()) {
+                    cout << "Student with that index already exists!\n";
+                    break;
+                }
+                cout << "Enter student name: ";
+                getline(cin, name);
+                students.push_back(Student(idx, name));
+                saveStudentsToFile();
+                cout << "Student registered successfully.\n";
+                break;
+            }
+            case 2:
+                if (students.empty()) {
+                    cout << "No students registered yet.\n";
+                } else {
+                    cout << "\nList of registered students:\n";
+                    for (const auto& s : students) {
+                        s.display();
+                    }
+                }
+                break;
+            case 3: {
+                string idx;
+                cout << "Enter index number to search: ";
+                getline(cin, idx);
+                bool found = false;
+                for (const auto& s : students) {
+                    if (s.getIndex() == idx) {
+                        cout << "Student found:\n";
+                        s.display();
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) cout << "No student with that index.\n";
+                break;
+            }
+            case 4:
+                cout << "Returning to main menu.\n";
+                break;
+            default:
+                cout << "Invalid choice. Try again.\n";
+        }
+    } while (choice != 4);
+}
+
+void attendanceSessionMenu() {
+    int choice;
+    do {
+        cout << "\n--- Attendance Session Management ---\n";
+        cout << "1. Create a new lecture session\n";
+        cout << "2. Mark attendance for a session\n";
+        cout << "3. Update attendance records\n";
+        cout << "4. List all sessions\n";
+        cout << "5. Load a session from file\n";
+        cout << "6. Back to main menu\n";
+        cout << "Enter choice: ";
+        cin >> choice;
+        cin.ignore();
+
+        switch (choice) {
+            case 1: {
+                if (students.empty()) {
+                    cout << "Please register at least one student first.\n";
+                    break;
+                }
+                string code, date, time;
+                int dur;
+                cout << "Enter course code: ";
+                getline(cin, code);
+                cout << "Enter date (YYYY-MM-DD): ";
+                getline(cin, date);
+                cout << "Enter start time (HH:MM): ";
+                getline(cin, time);
+                cout << "Enter duration (minutes): ";
+                cin >> dur;
+                cin.ignore();
+
+                AttendanceSession newSession(code, date, time, dur);
+                newSession.initialiseRecords(students);
+                sessions.push_back(newSession);
+                newSession.saveToFile();  // save immediately
+                cout << "Session created and saved.\n";
+                break;
+            }
+            case 2: {
+                if (sessions.empty()) {
+                    cout << "No sessions available. Create one first.\n";
+                    break;
+                }
+                // Show list of sessions for selection
+                cout << "Available sessions:\n";
+                for (size_t i = 0; i < sessions.size(); ++i) {
+                    cout << i+1 << ". " << sessions[i].getCourseCode() << " on "
+                         << sessions[i].getDate() << " at " << sessions[i].getStartTime() << endl;
+                }
+                cout << "Select session number: ";
+                int sel;
+                cin >> sel;
+                cin.ignore();
+                if (sel < 1 || sel > (int)sessions.size()) {
+                    cout << "Invalid selection.\n";
+                    break;
+                }
+                AttendanceSession& sess = sessions[sel-1];
+
+                // Mark attendance for each student
+                cout << "\nMarking attendance for " << sess.getCourseCode()
+                     << " on " << sess.getDate() << "\n";
+                for (const auto& student : students) {
+                    cout << student.getName() << " (" << student.getIndex() << ") – ";
+                    char status;
+                    cout << "Enter status (P/A/L): ";
+                    cin >> status;
+                    status = toupper(status);
+                    while (status != 'P' && status != 'A' && status != 'L') {
+                        cout << "Invalid. Enter P, A, or L: ";
+                        cin >> status;
+                        status = toupper(status);
+                    }
+                    sess.setStatus(student.getIndex(), status);
+                }
+                sess.saveToFile();  // update file
+                cout << "Attendance marked and saved.\n";
+                break;
+            }
+            case 3: {
+                if (sessions.empty()) {
+                    cout << "No sessions available.\n";
+                    break;
+                }
+                cout << "Available sessions:\n";
+                for (size_t i = 0; i < sessions.size(); ++i) {
+                    cout << i+1 << ". " << sessions[i].getCourseCode() << " on "
+                         << sessions[i].getDate() << endl;
+                }
+                cout << "Select session number: ";
+                int sel;
+                cin >> sel;
+                cin.ignore();
+                if (sel < 1 || sel > (int)sessions.size()) {
+                    cout << "Invalid selection.\n";
+                    break;
+                }
+                AttendanceSession& sess = sessions[sel-1];
+
+                string idx;
+                cout << "Enter student index to update: ";
+                getline(cin, idx);
+                // Verify student exists
+                auto studentIt = find_if(students.begin(), students.end(),
+                                         [&idx](const Student& s) { return s.getIndex() == idx; });
+                if (studentIt == students.end()) {
+                    cout << "Student not found.\n";
+                    break;
+                }
+                cout << "Current status: " << sess.getStatus(idx) << endl;
+                cout << "Enter new status (P/A/L): ";
+                char status;
+                cin >> status;
+                status = toupper(status);
+                cin.ignore();
+                if (sess.setStatus(idx, status)) {
+                    sess.saveToFile();
+                    cout << "Record updated.\n";
+                } else {
+                    cout << "Failed to update (maybe index not in session).\n";
+                }
+                break;
+            }
+            case 4:
+                if (sessions.empty()) {
+                    cout << "No sessions created yet.\n";
+                } else {
+                    cout << "\nList of sessions:\n";
+                    for (size_t i = 0; i < sessions.size(); ++i) {
+                        cout << i+1 << ". " << sessions[i].getCourseCode() << " | "
+                             << sessions[i].getDate() << " | " << sessions[i].getStartTime()
+                             << " | " << sessions[i].getDuration() << " min\n";
+                    }
+                }
+                break;
+            case 5: {
+                string fname;
+                cout << "Enter session filename (e.g., session_EEE201_2025-03-20.txt): ";
+                getline(cin, fname);
+                AttendanceSession* loaded = AttendanceSession::loadFromFile(fname, students);
+                if (loaded) {
+                    sessions.push_back(*loaded);
+                    delete loaded;  // we copied it into vector
+                    cout << "Session loaded successfully.\n";
+                } else {
+                    cout << "Failed to load session. File may not exist or format is invalid.\n";
+                }
+                break;
+            }
+            case 6:
+                cout << "Returning to main menu.\n";
+                break;
+            default:
+                cout << "Invalid choice.\n";
+        }
+    } while (choice != 6);
+}
+
+void reportsMenu() {
+    int choice;
+    do {
+        cout << "\n--- Reports and Summary ---\n";
+        cout << "1. Display attendance list for a session\n";
+        cout << "2. Display summary counts for a session\n";
+        cout << "3. Back to main menu\n";
+        cout << "Enter choice: ";
+        cin >> choice;
+        cin.ignore();
+
+        switch (choice) {
+            case 1:
+            case 2: {
+                if (sessions.empty()) {
+                    cout << "No sessions available.\n";
+                    break;
+                }
+                cout << "Available sessions:\n";
+                for (size_t i = 0; i < sessions.size(); ++i) {
+                    cout << i+1 << ". " << sessions[i].getCourseCode() << " on "
+                         << sessions[i].getDate() << endl;
+                }
+                cout << "Select session number: ";
+                int sel;
+                cin >> sel;
+                cin.ignore();
+                if (sel < 1 || sel > (int)sessions.size()) {
+                    cout << "Invalid selection.\n";
+                    break;
+                }
+                if (choice == 1)
+                    sessions[sel-1].displayAttendanceList(students);
+                else
+                    sessions[sel-1].displaySummary();
+                break;
+            }
+            case 3:
+                cout << "Returning to main menu.\n";
+                break;
+            default:
+                cout << "Invalid choice.\n";
+        }
+    } while (choice != 3);
+}
+
+// ----------------------------------------------------------------------------
+// Main Program
+// ----------------------------------------------------------------------------
+int main() {
+    // Load existing students from file
+    loadStudentsFromFile();
+
+    // Optionally, we could auto-load session files, but we let the user load them manually.
+    // Sessions created during runtime are automatically saved and added to the 'sessions' vector.
+
+    int mainChoice;
+    do {
+        cout << "\n========================================\n";
+        cout << "   DIGITAL ATTENDANCE SYSTEM\n";
+        cout << "========================================\n";
+        cout << "1. Student Management\n";
+        cout << "2. Attendance Session Management\n";
+        cout << "3. Reports and Summary\n";
+        cout << "4. Exit\n";
+        cout << "Enter choice: ";
+        cin >> mainChoice;
+        cin.ignore();
+
+        switch (mainChoice) {
+            case 1: studentManagementMenu(); break;
+            case 2: attendanceSessionMenu(); break;
+            case 3: reportsMenu(); break;
+            case 4: cout << "Exiting program. Goodbye!\n"; break;
+            default: cout << "Invalid choice. Please enter 1-4.\n";
+        }
+    } while (mainChoice != 4);
+
+    return 0;
+}
